@@ -99,7 +99,7 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/wangchaojun/my_music.git
+git clone git@github.com:wyzzgzhdcxy/my_music.git
 cd my_music
 
 # 安装依赖
