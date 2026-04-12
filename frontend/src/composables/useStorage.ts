@@ -15,6 +15,7 @@ const DB_KEY_PLAY_STATE = 'my_music_play_state'
 const DB_KEY_VOLUME = 'my_music_volume'
 const DB_KEY_PLAY_MODE = 'my_music_play_mode'
 const DB_KEY_VIDEO_RESOLUTIONS = 'my_music_video_resolutions'
+const DB_KEY_WINDOW_STATE = 'my_music_window_state'
 
 let dbInstance: IDBDatabase | null = null
 
@@ -188,4 +189,20 @@ export async function setVideoResolution(path: string, resolution: string): Prom
   const resolutions = await getVideoResolutions()
   resolutions[path] = resolution
   return dbSet(DB_KEY_VIDEO_RESOLUTIONS, resolutions)
+}
+
+// Window state
+interface WindowState {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export async function getWindowState(): Promise<WindowState | null> {
+  return dbGet(DB_KEY_WINDOW_STATE, null)
+}
+
+export async function setWindowState(state: WindowState): Promise<void> {
+  return dbSet(DB_KEY_WINDOW_STATE, state)
 }

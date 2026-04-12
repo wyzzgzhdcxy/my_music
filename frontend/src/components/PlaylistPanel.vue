@@ -50,7 +50,17 @@ const filteredPlaylist = computed(() => {
   return props.playlist.filter(file => file.name.toLowerCase().includes(keyword))
 })
 
+// 获取过滤后列表中每个元素在原始列表中的索引
 function selectTrack(index: number) {
+  // 如果有搜索，使用 filteredPlaylist[index] 的 path 在原始 playlist 中找索引
+  if (debouncedQuery.value.trim() && filteredPlaylist.value[index]) {
+    const selectedPath = filteredPlaylist.value[index].path
+    const originalIndex = props.playlist.findIndex(f => f.path === selectedPath)
+    if (originalIndex !== -1) {
+      emit('select', originalIndex)
+      return
+    }
+  }
   emit('select', index)
 }
 </script>
@@ -111,7 +121,7 @@ function selectTrack(index: number) {
   top: 30px;
   left: 0;
   right: 0;
-  bottom: 80px;
+  bottom: 75px;
   background: rgba(10, 15, 30, 0.8);
   backdrop-filter: blur(8px);
   border-left: 1px solid rgba(255, 255, 255, 0.08);

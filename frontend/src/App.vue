@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { GetMediaFiles, StopAudioServer, GetLyric, SelectMusicFolder, ClearThumbnails, GetCover, LogMessage, OpenCacheFolder } from '../wailsjs/go/main/App'
-import { WindowMinimise, Quit, WindowSetSize, WindowSetPosition, WindowGetPosition, WindowSetAlwaysOnTop, WindowIsMinimised } from '../wailsjs/runtime/runtime'
+import { WindowMinimise, Quit, WindowSetSize, WindowSetPosition, WindowGetPosition, WindowGetSize, WindowSetMinSize, WindowSetMaxSize, WindowSetAlwaysOnTop, WindowIsMinimised, WindowToggleMaximise, WindowIsMaximised } from '../wailsjs/runtime/runtime'
 import PlaylistPanel from './components/PlaylistPanel.vue'
 import MenuPanel from './components/MenuPanel.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
@@ -14,7 +14,7 @@ import {
   getMusicDir, setMusicDir,
   getPlayState, setPlayState,
   getVideoResolutions, setVideoResolution,
-  getCloseDB
+  getCloseDB, getWindowState, setWindowState
 } from './composables/useStorage'
 
 // ============== Composables ==============
@@ -148,8 +148,11 @@ const isSmallScreen = ref(false)
 const isMiniMode = ref(false)
 const alwaysOnTop = ref(false)
 const isMinimized = ref(false)
+const isMaximized = ref(false)
 const miniModeRestorePos = ref({ x: 0, y: 0 })
+const miniModeRestoreSize = ref({ width: 924, height: 568 })
 const miniModeRestoreAlwaysOnTop = ref(false)
+const smallScreenRestoreSize = ref({ width: 924, height: 568 })
 
 // Computed
 const trackTitle = computed(() => {
@@ -182,37 +185,59 @@ function toggleMenu() {
 
 async function toggleSmallScreen() {
   const FULL_WIDTH = 924
-  const THIRD_WIDTH = 308
+  const SMALL_WIDTH = 300
   const HEIGHT = 568
 
+  const wasSmallScreen = isSmallScreen.value
   isSmallScreen.value = !isSmallScreen.value
 
   const pos = await WindowGetPosition()
-  const currentWidth = isSmallScreen.value ? FULL_WIDTH : THIRD_WIDTH
-  const newWidth = isSmallScreen.value ? THIRD_WIDTH : FULL_WIDTH
-  const newX = pos.x + currentWidth - newWidth
+  const size = await WindowGetSize()
 
-  WindowSetSize(newWidth, HEIGHT)
-  WindowSetPosition(newX, pos.y)
+  if (isSmallScreen.value) {
+    // 进入小屏模式，保存当前窗口尺寸
+    smallScreenRestoreSize.value = { width: size.w, height: size.h }
+    WindowSetMinSize(SMALL_WIDTH, HEIGHT)
+    WindowSetMaxSize(SMALL_WIDTH, HEIGHT)
+    WindowSetSize(SMALL_WIDTH, HEIGHT)
+    WindowSetPosition(pos.x + size.w - SMALL_WIDTH, pos.y)
+  } else {
+    // 退出小屏模式，恢复之前的大小和位置
+    WindowSetMinSize(0, 0)
+    WindowSetMaxSize(0, 0)
+    WindowSetSize(smallScreenRestoreSize.value.width, smallScreenRestoreSize.value.height)
+    WindowSetPosition(pos.x + SMALL_WIDTH - smallScreenRestoreSize.value.width, pos.y)
+    WindowSetMinSize(FULL_WIDTH, HEIGHT)
+  }
 }
 
 async function toggleMiniMode() {
+  const wasSmallScreen = isSmallScreen.value
   isMiniMode.value = !isMiniMode.value
   if (isMiniMode.value) {
     const pos = await WindowGetPosition()
-    const currentWidth = 924
+    const size = await WindowGetSize()
+    const currentWidth = wasSmallScreen ? 300 : 924
     const miniWidth = 300
     const newX = pos.x + currentWidth - miniWidth
     miniModeRestorePos.value = { x: pos.x, y: pos.y }
+    miniModeRestoreSize.value = { width: size.w, height: size.h }
+    miniModeRestoreAlwaysOnTop.value = alwaysOnTop.value
     WindowSetPosition(newX, pos.y)
     WindowSetSize(miniWidth, 60)
-    miniModeRestoreAlwaysOnTop.value = alwaysOnTop.value
+    WindowSetMinSize(miniWidth, 60)
+    WindowSetMaxSize(miniWidth, 60)
     alwaysOnTop.value = true
     WindowSetAlwaysOnTop(true)
     setAlwaysOnTopState(true)
   } else {
-    WindowSetSize(924, 568)
+    const restoreWidth = miniModeRestoreSize.value.width || 924
+    const restoreHeight = miniModeRestoreSize.value.height || 568
+    WindowSetMinSize(0, 0)
+    WindowSetMaxSize(0, 0)
+    WindowSetSize(restoreWidth, restoreHeight)
     WindowSetPosition(miniModeRestorePos.value.x, miniModeRestorePos.value.y)
+    WindowSetMinSize(restoreWidth, restoreHeight)
     alwaysOnTop.value = miniModeRestoreAlwaysOnTop.value
     WindowSetAlwaysOnTop(alwaysOnTop.value)
     setAlwaysOnTopState(alwaysOnTop.value)
@@ -231,6 +256,11 @@ function minimize() {
   }
   isMinimized.value = true
   WindowMinimise()
+}
+
+async function toggleMaximize() {
+  isMaximized.value = !isMaximized.value
+  WindowToggleMaximise()
 }
 
 function closeWindow() {
@@ -274,6 +304,67 @@ function stopMinimizePolling() {
   if (minimizeCheckInterval) {
     clearInterval(minimizeCheckInterval)
     minimizeCheckInterval = null
+  }
+}
+
+// ============== Window State Save/Restore ==============
+let windowStateSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+async function saveWindowState() {
+  if (isMiniMode.value || isSmallScreen.value) return
+  if (windowStateSaveTimer) {
+    clearTimeout(windowStateSaveTimer)
+  }
+  windowStateSaveTimer = setTimeout(async () => {
+    try {
+      const pos = await WindowGetPosition()
+      const size = await WindowGetSize()
+      await setWindowState({ x: pos.x, y: pos.y, width: size.w, height: size.h })
+    } catch (e) {
+      console.error('saveWindowState error:', e)
+    }
+  }, 500)
+}
+
+async function restoreWindowState() {
+  try {
+    const state = await getWindowState()
+    if (state && state.x !== undefined && state.y !== undefined && state.width && state.height) {
+      WindowSetPosition(state.x, state.y)
+      WindowSetSize(state.width, state.height)
+    }
+  } catch (e) {
+    console.error('restoreWindowState error:', e)
+  }
+}
+
+let windowStateCheckInterval: ReturnType<typeof setInterval> | null = null
+
+function startWindowStatePolling() {
+  if (windowStateCheckInterval) return
+  let lastX = 0, lastY = 0, lastW = 0, lastH = 0
+  windowStateCheckInterval = setInterval(async () => {
+    if (isMiniMode.value || isSmallScreen.value) return
+    try {
+      const pos = await WindowGetPosition()
+      const size = await WindowGetSize()
+      if (pos.x !== lastX || pos.y !== lastY || size.w !== lastW || size.h !== lastH) {
+        lastX = pos.x
+        lastY = pos.y
+        lastW = size.w
+        lastH = size.h
+        saveWindowState()
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, 1000)
+}
+
+function stopWindowStatePolling() {
+  if (windowStateCheckInterval) {
+    clearInterval(windowStateCheckInterval)
+    windowStateCheckInterval = null
   }
 }
 
@@ -666,6 +757,7 @@ async function restorePlayState() {
 
 function handleBeforeUnload() {
   saveCurrentPlayState()
+  saveWindowState()
 }
 
 // ============== Load Playlist ==============
@@ -867,6 +959,8 @@ onMounted(async () => {
   stepStart = Date.now()
   loadPlaylist()
   startMinimizePolling()
+  startWindowStatePolling()
+  await restoreWindowState()
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('click', handleClickOutside)
   window.addEventListener('focus', handleWindowFocus)
@@ -886,6 +980,7 @@ onUnmounted(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   saveCurrentPlayState()
   stopMinimizePolling()
+  stopWindowStatePolling()
   StopAudioServer().catch(() => {})
 })
 </script>
@@ -915,7 +1010,7 @@ onUnmounted(() => {
       </div>
       <!-- 普通/小屏模式 -->
       <template v-else>
-        <div class="titlebar-drag">
+        <div class="titlebar-drag" @dblclick="toggleMaximize">
           <img :src="iconUrl" alt="" class="titlebar-icon" @error="($event.target as HTMLImageElement).style.display = 'none'" />
           <span>{{ isSmallScreen ? trackTitle : titlebarTitle }}</span>
         </div>
@@ -952,6 +1047,10 @@ onUnmounted(() => {
             @update:lyricsColor="theme.updateLyricsColor"
           />
           <button class="titlebar-btn minimize" @click="minimize" style="--wails-draggable: no-drag;">─</button>
+          <button v-if="!isSmallScreen" class="titlebar-btn maximize" @click="toggleMaximize" style="--wails-draggable: no-drag;" :title="isMaximized ? '还原' : '最大化'">
+            <svg v-if="isMaximized" viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
+            <svg v-else viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
+          </button>
           <button class="titlebar-btn close" @click="closeWindow" style="--wails-draggable: no-drag;">✕</button>
         </div>
       </template>
@@ -1029,7 +1128,7 @@ onUnmounted(() => {
             v-for="(h, i) in visualizer.visualizerBars.value"
             :key="i"
             class="viz-bar"
-            :style="{ height: audioPlayer.isPlaying.value ? Math.min(80, Math.max(4, h * 0.4)) + 'px' : '4px' }"
+            :style="{ height: audioPlayer.isPlaying.value ? Math.min(120, Math.max(4, h * 0.6)) + 'px' : '4px' }"
           ></div>
         </div>
       </div>
@@ -1240,6 +1339,12 @@ onUnmounted(() => {
 .titlebar-btn.close:hover {
   background: rgba(220, 60, 60, 0.85);
   color: #ffffff;
+  cursor: pointer;
+}
+
+.titlebar-btn.maximize:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
   cursor: pointer;
 }
 
@@ -1498,7 +1603,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 80px;
+  gap: 40px;
   min-height: 0;
   width: 100%;
   margin: 0;
@@ -1522,15 +1627,18 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  flex-shrink: 0;
+  flex: 1;
+  width: 100%;
+  max-width: 100%;
   margin-top: -50px;
-  margin-left: 20px;
+  padding-left: 20px;
 }
 
 .album-glow {
   position: absolute;
-  width: 350px;
-  height: 350px;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 1;
   background: radial-gradient(circle, rgba(200, 120, 180, 0.4) 0%, rgba(120, 80, 160, 0.2) 40%, transparent 70%);
   border-radius: 50%;
   filter: blur(15px);
@@ -1543,8 +1651,8 @@ onUnmounted(() => {
 }
 
 .album-cover {
-  width: 350px;
-  height: 350px;
+  width: 100%;
+  aspect-ratio: 1;
   border-radius: 50%;
   overflow: hidden;
   box-shadow: 0 0 60px rgba(180, 100, 200, 0.4), 0 20px 40px rgba(0, 0, 0, 0.4);
@@ -1572,8 +1680,10 @@ onUnmounted(() => {
 
 /* 右侧信息区 */
 .right-content {
-  width: 500px;
-  height: 400px;
+  flex: 0 0 60%;
+  width: 60%;
+  max-width: 60%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1593,9 +1703,24 @@ onUnmounted(() => {
 }
 
 .right-content.small-screen {
-  width: 90%;
+  flex: 0 0 300px;
+  width: 300px;
+  max-width: 300px;
   margin: 0 auto;
   margin-top: 0;
+  padding: 0 20px;
+}
+
+.right-content.small-screen .track-title {
+  font-size: 32px;
+}
+
+.right-content.small-screen .lyric-line {
+  font-size: 18px;
+}
+
+.right-content.small-screen .lyric-line.active {
+  font-size: 28px;
 }
 
 .right-content.small-screen .visualizer {
@@ -1606,10 +1731,15 @@ onUnmounted(() => {
 .track-info {
   text-align: left;
   width: 100%;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  margin-top: 50px;
 }
 
 .track-title {
-  font-size: 28px;
+  font-size: clamp(10px, 3.5vw, 56px);
   font-weight: 600;
   color: var(--title-color);
   letter-spacing: 2px;
@@ -1623,11 +1753,13 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 5px;
   flex: 1;
+  height: 100%;
   overflow: hidden;
+  width: 100%;
 }
 
 .lyric-line {
-  font-size: 18px;
+  font-size: clamp(8px, 2vw, 40px);
   color: var(--lyrics-color);
   letter-spacing: 1px;
   transition: all 0.3s ease;
@@ -1637,7 +1769,7 @@ onUnmounted(() => {
 }
 
 .lyric-line.active {
-  font-size: 24px;
+  font-size: clamp(12px, 3vw, 52px);
   opacity: 1;
   background: linear-gradient(to right,
     var(--lyric-color) 0% var(--progress),
@@ -1656,12 +1788,14 @@ onUnmounted(() => {
   align-items: flex-end;
   justify-content: flex-start;
   gap: 3px;
-  width: 500px;
+  width: 100%;
+  margin-bottom: 75px;
   contain: layout style;
 }
 
 .viz-bar {
-  width: 6px;
+  flex: 1;
+  width: clamp(1px, 0.4vw, 8px);
   background: linear-gradient(to top, var(--viz-color), color-mix(in srgb, var(--viz-color) 70%, white));
   border-radius: 2px;
   will-change: height;
