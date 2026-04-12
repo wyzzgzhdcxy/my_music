@@ -1790,6 +1790,8 @@ onUnmounted(() => {
   gap: 3px;
   width: 100%;
   margin-bottom: 75px;
+  padding-right: 20px;
+  box-sizing: border-box;
   contain: layout style;
 }
 
