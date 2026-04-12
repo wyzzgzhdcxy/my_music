@@ -7,6 +7,7 @@ const props = defineProps<{
   titleColor: string
   titlebarColor: string
   lyricsColor: string
+  bgImageEnabled: boolean
   isSmallScreen: boolean
   isMiniMode: boolean
   alwaysOnTop: boolean
@@ -16,7 +17,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectFolder: []
   selectBgImage: []
+  toggleBgImageEnabled: []
   clearCache: []
+  openCacheFolder: []
   toggleSmallScreen: []
   toggleMiniMode: []
   toggleAlwaysOnTop: []
@@ -105,6 +108,10 @@ function handleLyricsColorChange(e: Event) {
         <span class="menu-icon">&#128465;</span>
         <span>清空缓存</span>
       </div>
+      <div class="menu-item" @click="emit('openCacheFolder')">
+        <span class="menu-icon">&#128193;</span>
+        <span>打开缓存文件夹</span>
+      </div>
     </template>
     <!-- 音乐模式：显示所有菜单 -->
     <template v-else>
@@ -115,6 +122,7 @@ function handleLyricsColorChange(e: Event) {
       <div class="menu-item" @click="emit('selectBgImage')">
         <span class="menu-icon">&#128444;</span>
         <span>背景图片</span>
+        <span class="bg-toggle" :class="{ enabled: bgImageEnabled }" @click.stop="emit('toggleBgImageEnabled')"></span>
       </div>
       <div class="menu-item color-picker-item">
         <span class="menu-icon">&#127912;</span>
@@ -211,6 +219,10 @@ function handleLyricsColorChange(e: Event) {
         <span class="menu-icon">&#128465;</span>
         <span>清空缓存</span>
       </div>
+      <div class="menu-item" @click="emit('openCacheFolder')">
+        <span class="menu-icon">&#128193;</span>
+        <span>打开缓存文件夹</span>
+      </div>
     </template>
   </div>
 </template>
@@ -251,6 +263,39 @@ function handleLyricsColorChange(e: Event) {
   margin-left: auto;
   border: 1px solid rgba(255, 255, 255, 0.3);
   flex-shrink: 0;
+}
+
+.bg-toggle {
+  margin-left: auto;
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.2);
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.bg-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.bg-toggle.enabled {
+  background: rgba(74, 185, 120, 0.7);
+}
+
+.bg-toggle.enabled::after {
+  transform: translateX(16px);
+  background: #ffffff;
 }
 
 .menu-item:hover {

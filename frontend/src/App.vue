@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
-import { GetMediaFiles, StopAudioServer, GetLyric, SelectMusicFolder, ClearThumbnails, GetCover, LogMessage } from '../wailsjs/go/main/App'
+import { GetMediaFiles, StopAudioServer, GetLyric, SelectMusicFolder, ClearThumbnails, GetCover, LogMessage, OpenCacheFolder } from '../wailsjs/go/main/App'
 import { WindowMinimise, Quit, WindowSetSize, WindowSetPosition, WindowGetPosition, WindowSetAlwaysOnTop, WindowIsMinimised } from '../wailsjs/runtime/runtime'
 import PlaylistPanel from './components/PlaylistPanel.vue'
 import MenuPanel from './components/MenuPanel.vue'
@@ -92,20 +92,34 @@ const currentLyricIndex = computed(() => {
   return idx
 })
 
+// Progress through current lyric line (0-100)
+const currentLyricProgress = computed(() => {
+  const idx = currentLyricIndex.value
+  const lines = lyricLines.value
+  if (idx < 0 || lines.length === 0) return 0
+  const t = audioPlayer.currentTime.value
+  const currentTime = lines[idx].time
+  const nextTime = idx + 1 < lines.length ? lines[idx + 1].time : currentTime + 5
+  const duration = nextTime - currentTime
+  if (duration <= 0) return 100
+  return Math.min(100, ((t - currentTime) / duration) * 100)
+})
+
 // Display 9 lyric lines centered at current
 const lyricDisplayLines = computed(() => {
   const idx = currentLyricIndex.value
   const lines = lyricLines.value
+  const progress = currentLyricProgress.value
   if (lines.length === 0) {
-    return Array.from({ length: 9 }, () => ({ text: '', active: false }))
+    return Array.from({ length: 9 }, () => ({ text: '', active: false, progress: 0 }))
   }
   const result = []
   for (let i = -4; i <= 4; i++) {
     const lineIdx = idx + i
     if (lineIdx >= 0 && lineIdx < lines.length) {
-      result.push({ text: lines[lineIdx].text, active: i === 0 })
+      result.push({ text: lines[lineIdx].text, active: i === 0, progress: i === 0 ? progress : 0 })
     } else {
-      result.push({ text: '', active: false })
+      result.push({ text: '', active: false, progress: 0 })
     }
   }
   return result
@@ -754,6 +768,28 @@ async function selectMusicFolder() {
   }
 }
 
+// ============== Refresh Playlist ==============
+async function refreshPlaylist() {
+  if (!musicDir.value) return
+
+  try {
+    const result = await GetMediaFiles(musicDir.value)
+    playlistState.setPlaylist(result.files, result.isVideoMode)
+    isVideoMode.value = result.isVideoMode
+
+    // 如果当前播放的曲目已不存在，重置
+    if (playlistState.currentIndex.value >= result.files.length) {
+      playlistState.currentIndex.value = 0
+    }
+
+    if (result.files.length > 0 && playlistState.currentIndex.value < result.files.length) {
+      loadTrack(playlistState.currentIndex.value)
+    }
+  } catch (e) {
+    console.error('刷新播放列表失败:', e)
+  }
+}
+
 // ============== Clear Cache ==============
 async function clearCache() {
   const { openDB } = await import('./composables/useStorage')
@@ -783,6 +819,11 @@ async function clearCache() {
       resolve()
     }
   })
+}
+
+// ============== Open Cache Folder ==============
+async function openCacheFolder() {
+  await OpenCacheFolder()
 }
 
 // ============== Watch video mode ==============
@@ -889,13 +930,16 @@ onUnmounted(() => {
             :titleColor="theme.titleColor.value"
             :titlebarColor="theme.titlebarColor.value"
             :lyricsColor="theme.lyricsColor.value"
+            :bgImageEnabled="theme.bgImageEnabled.value"
             :isSmallScreen="isSmallScreen"
             :isMiniMode="isMiniMode"
             :alwaysOnTop="alwaysOnTop"
             :isVideoMode="isVideoMode"
             @selectFolder="selectMusicFolder(); showMenu = false"
             @selectBgImage="theme.saveBgImage(audioPlayer.streamUrl.value); showMenu = false"
+            @toggleBgImageEnabled="theme.updateBgImageEnabled(!theme.bgImageEnabled.value); showMenu = false"
             @clearCache="clearCache(); showMenu = false"
+            @openCacheFolder="openCacheFolder(); showMenu = false"
             @toggleSmallScreen="toggleSmallScreen(); showMenu = false"
             @toggleMiniMode="toggleMiniMode(); showMenu = false"
             @toggleAlwaysOnTop="toggleAlwaysOnTop(); showMenu = false"
@@ -923,7 +967,7 @@ onUnmounted(() => {
     <div class="bg-glow bg-glow-2" v-show="!isMiniMode && !isMinimized"></div>
     <div class="bg-glow bg-glow-3" v-show="!isMiniMode && !isMinimized"></div>
     <img v-show="backgroundUrl && !isMiniMode && !isMinimized" :src="backgroundUrl" class="background-image" alt="" @error="($event.target as HTMLImageElement).style.display = 'none'" />
-    <img v-show="theme.bgImage.value && !isMiniMode && !isMinimized" :src="theme.bgImage.value" class="custom-bg-image" alt="" @error="theme.bgImage.value = ''" />
+    <img v-show="theme.bgImage.value && theme.bgImageEnabled.value && !isMiniMode && !isMinimized" :src="theme.bgImage.value" class="custom-bg-image" alt="" @error="theme.bgImage.value = ''" />
 
     <!-- 设置提示 -->
     <div v-if="showSetupPrompt && !isMiniMode && !isMinimized" class="setup-prompt" @click="selectMusicFolder">
@@ -975,6 +1019,7 @@ onUnmounted(() => {
               :key="i"
               class="lyric-line"
               :class="{ active: line.active }"
+              :style="line.active ? { '--progress': line.progress + '%' } : {}"
             >{{ line.text }}</div>
           </div>
         </div>
@@ -1112,6 +1157,7 @@ onUnmounted(() => {
         :isSmallScreen="isSmallScreen"
         :videoResolutions="(playlistState.videoResolutions.value as Record<string, string>)"
         @select="selectTrack"
+        @refresh="refreshPlaylist"
       />
     </Transition>
   </div>
@@ -1591,10 +1637,17 @@ onUnmounted(() => {
 }
 
 .lyric-line.active {
-  color: var(--lyric-color);
   font-size: 24px;
   opacity: 1;
-  text-shadow: 0 0 20px color-mix(in srgb, var(--lyric-color) 60%, white);
+  background: linear-gradient(to right,
+    var(--lyric-color) 0% var(--progress),
+    color-mix(in srgb, var(--lyric-color) 40%, var(--lyrics-color)) calc(var(--progress) + 8%),
+    var(--lyrics-color) 100%
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  text-shadow: none;
 }
 
 /* 可视化 */

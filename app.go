@@ -253,9 +253,9 @@ func (a *App) GetMediaFiles(musicDir string) MediaFilesResult {
 	}
 
 	// Pre-scan directories once
-	lyricDir := filepath.Join(filepath.Dir(os.Args[0]), "lyrics")
+	lyricDir := filepath.Join(getDataDir(), "lyrics")
 	lyricMap := buildLyricMap(lyricDir)
-	coverDir := filepath.Join(filepath.Dir(os.Args[0]), "cover")
+	coverDir := filepath.Join(getDataDir(), "cover")
 	backgroundMap, coverMap := buildCoverMap(coverDir)
 
 	audioExts := map[string]bool{
@@ -381,7 +381,6 @@ func (a *App) GetLyric(lyricPath string, artist string, title string, musicPath 
 	if lyricPath != "" {
 		data, err := os.ReadFile(lyricPath)
 		if err == nil {
-			log.Printf("[GetLyric] 使用本地歌词文件: %s", lyricPath)
 			return LyricResult{Content: string(data), LyricPath: lyricPath}
 		}
 	}
@@ -428,6 +427,18 @@ func (a *App) GetLyric(lyricPath string, artist string, title string, musicPath 
 		log.Printf("[GetLyric] 第一次尝试失败，尝试交换: title=%s, artist=%s", title, artist)
 		downloadedPath = a.DownloadLyric(musicPath, title, artist, duration)
 	}
+
+	// 如果 LRCIB 失败，尝试网易云
+	if downloadedPath == "" {
+		log.Printf("[GetLyric] LRCIB 失败，尝试网易云: %s - %s", artist, title)
+		downloadedPath = a.DownloadLyricFromNetEase(musicPath, artist, title)
+		if downloadedPath == "" {
+			// 尝试交换
+			log.Printf("[GetLyric] 网易云第一次尝试失败，尝试交换: %s - %s", title, artist)
+			downloadedPath = a.DownloadLyricFromNetEase(musicPath, title, artist)
+		}
+	}
+
 	if downloadedPath == "" {
 		return LyricResult{}
 	}
@@ -499,7 +510,7 @@ func fetchLyricFromLRCIB(client *http.Client, artist, title string, duration flo
 func (a *App) DownloadLyric(musicPath string, artist string, title string, duration float64) string {
 	log.Printf("[歌词下载] 开始下载歌词: %s - %s, 时长: %.0f秒", artist, title, duration)
 
-	lyricsDir := filepath.Join(filepath.Dir(os.Args[0]), "lyrics")
+	lyricsDir := filepath.Join(getDataDir(), "lyrics")
 	log.Printf("[歌词下载] 歌词目录: %s", lyricsDir)
 	if err := os.MkdirAll(lyricsDir, 0755); err != nil {
 		log.Printf("[歌词下载] 创建目录失败: %v", err)
@@ -524,6 +535,132 @@ func (a *App) DownloadLyric(musicPath string, artist string, title string, durat
 	}
 
 	log.Printf("[歌词下载] 歌词已保存: %s", lyricPath)
+	return lyricPath
+}
+
+// ============== 网易云歌词获取 ==============
+
+// NetEaseLyricSearchResult 网易云歌词搜索结果
+type NetEaseLyricSearchResult struct {
+	Code   int `json:"code"`
+	Result struct {
+		Songs []struct {
+			ID      int    `json:"id"`
+			Name    string `json:"name"`
+			Artists []struct {
+				Name string `json:"name"`
+			} `json:"artists"`
+		} `json:"songs"`
+	} `json:"result"`
+}
+
+// NetEaseLyricContent 网易云歌词内容
+type NetEaseLyricContent struct {
+	Code int `json:"code"`
+	LRC  struct {
+		Lyric string `json:"lyric"`
+	} `json:"lrc,omitempty"`
+}
+
+// fetchLyricFromNetEase 通过网易云API获取歌词
+func (a *App) fetchLyricFromNetEase(artist, title string) string {
+	// 搜索歌曲
+	searchURL := fmt.Sprintf("http://music.163.com/api/search/get?s=%s&type=1&limit=1",
+		url.QueryEscape(artist+" "+title))
+
+	resp, err := a.httpClient.Get(searchURL)
+	if err != nil {
+		log.Printf("[网易云歌词] 搜索请求失败: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		log.Printf("[网易云歌词] 搜索返回状态码: %d", resp.StatusCode)
+		return ""
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[网易云歌词] 读取搜索响应失败: %v", err)
+		return ""
+	}
+
+	var searchResult NetEaseLyricSearchResult
+	if err := json.Unmarshal(body, &searchResult); err != nil {
+		log.Printf("[网易云歌词] 解析搜索结果失败: %v", err)
+		return ""
+	}
+
+	if searchResult.Code != 200 || len(searchResult.Result.Songs) == 0 {
+		log.Printf("[网易云歌词] 未找到歌曲: %s - %s", artist, title)
+		return ""
+	}
+
+	songID := searchResult.Result.Songs[0].ID
+	log.Printf("[网易云歌词] 找到歌曲 ID: %d, 名称: %s", songID, searchResult.Result.Songs[0].Name)
+
+	// 获取歌词
+	lyricURL := fmt.Sprintf("http://music.163.com/api/song/lyric?id=%d&lv=1&kv=1&tv=-1", songID)
+	resp, err = a.httpClient.Get(lyricURL)
+	if err != nil {
+		log.Printf("[网易云歌词] 获取歌词请求失败: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		log.Printf("[网易云歌词] 获取歌词返回状态码: %d", resp.StatusCode)
+		return ""
+	}
+
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[网易云歌词] 读取歌词响应失败: %v", err)
+		return ""
+	}
+
+	var lyricResult NetEaseLyricContent
+	if err := json.Unmarshal(body, &lyricResult); err != nil {
+		log.Printf("[网易云歌词] 解析歌词结果失败: %v", err)
+		return ""
+	}
+
+	if lyricResult.Code != 200 || lyricResult.LRC.Lyric == "" {
+		log.Printf("[网易云歌词] 未获取到歌词: %s - %s", artist, title)
+		return ""
+	}
+
+	log.Printf("[网易云歌词] 成功获取歌词: %s - %s", artist, title)
+	return lyricResult.LRC.Lyric
+}
+
+// DownloadLyricFromNetEase 从网易云下载歌词
+func (a *App) DownloadLyricFromNetEase(musicPath, artist, title string) string {
+	log.Printf("[网易云歌词] 开始下载歌词: %s - %s", artist, title)
+
+	lyricsDir := filepath.Join(getDataDir(), "lyrics")
+	if err := os.MkdirAll(lyricsDir, 0755); err != nil {
+		log.Printf("[网易云歌词] 创建目录失败: %v", err)
+		return ""
+	}
+
+	lyricContent := a.fetchLyricFromNetEase(artist, title)
+	if lyricContent == "" {
+		log.Printf("[网易云歌词] 获取歌词内容为空: %s - %s", artist, title)
+		return ""
+	}
+
+	// 使用音乐文件名作为歌词文件名
+	musicName := strings.TrimSuffix(filepath.Base(musicPath), filepath.Ext(musicPath))
+	lyricPath := filepath.Join(lyricsDir, musicName+".lrc")
+
+	if err := os.WriteFile(lyricPath, []byte(lyricContent), 0644); err != nil {
+		log.Printf("[网易云歌词] 保存文件失败: %v", err)
+		return ""
+	}
+
+	log.Printf("[网易云歌词] 歌词已保存: %s", lyricPath)
 	return lyricPath
 }
 
@@ -759,7 +896,7 @@ func (a *App) StopAudioServer() {
 
 // getThumbnailDir returns the thumbnail cache directory
 func getThumbnailDir() string {
-	return filepath.Join(filepath.Dir(os.Args[0]), "thumbnails")
+	return filepath.Join(getDataDir(), "thumbnails")
 }
 
 // GetVideoThumbnail generates or retrieves a cached thumbnail for a video file
@@ -900,9 +1037,27 @@ func (a *App) ClearThumbnails() error {
 	return nil
 }
 
-// getThemeDir returns the theme directory path (exe所在目录/theme)
+// getDataDir returns the application data directory (C:\Users\xxx\AppData\Local\my_music)
+func getDataDir() string {
+	dir := os.Getenv("LOCALAPPDATA")
+	if dir == "" {
+		dir, _ = os.UserConfigDir()
+	}
+	dir = filepath.Join(dir, "my_music")
+	os.MkdirAll(dir, 0755)
+	return dir
+}
+
+// OpenCacheFolder opens the data folder in Windows Explorer
+func (a *App) OpenCacheFolder() {
+	dir := getDataDir()
+	cmd := exec.Command("explorer", dir)
+	cmd.Run()
+}
+
+// getThemeDir returns the theme directory path (AppData\Local\my_music\theme)
 func getThemeDir() string {
-	return filepath.Join(filepath.Dir(os.Args[0]), "theme")
+	return filepath.Join(getDataDir(), "theme")
 }
 
 // SaveBgImage saves a background image (base64 data URL) to the theme directory
@@ -1068,7 +1223,7 @@ func (a *App) FetchCoverFromNetEase(artist string, title string, fileBase string
 		return ""
 	}
 
-	coverDir := filepath.Join(filepath.Dir(os.Args[0]), "cover")
+	coverDir := filepath.Join(getDataDir(), "cover")
 	if err := os.MkdirAll(coverDir, 0755); err != nil {
 		log.Printf("[FetchCover] 创建 cover 目录失败: %v", err)
 		return ""
@@ -1219,7 +1374,7 @@ func (a *App) GetCover(artist string, title string) string {
 		return ""
 	}
 
-	coverDir := filepath.Join(filepath.Dir(os.Args[0]), "cover")
+	coverDir := filepath.Join(getDataDir(), "cover")
 
 	// Try to find existing cover file
 	keyword := title

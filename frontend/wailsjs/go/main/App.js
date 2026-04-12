@@ -18,6 +18,10 @@ export function DownloadLyric(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['DownloadLyric'](arg1, arg2, arg3, arg4);
 }
 
+export function DownloadLyricFromNetEase(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DownloadLyricFromNetEase'](arg1, arg2, arg3);
+}
+
 export function FetchCoverFromNetEase(arg1, arg2, arg3) {
   return window['go']['main']['App']['FetchCoverFromNetEase'](arg1, arg2, arg3);
 }
@@ -52,6 +56,10 @@ export function GetStartTime() {
 
 export function LogMessage(arg1) {
   return window['go']['main']['App']['LogMessage'](arg1);
+}
+
+export function OpenCacheFolder() {
+  return window['go']['main']['App']['OpenCacheFolder']();
 }
 
 export function SaveBgImage(arg1) {

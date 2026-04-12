@@ -27,6 +27,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [index: number]
+  refresh: []
 }>()
 
 // 搜索（带防抖）
@@ -58,12 +59,17 @@ function selectTrack(index: number) {
   <div class="playlist-panel" :class="{ 'small-screen': isSmallScreen }">
     <div class="playlist-header">
       <span>播放列表 ({{ playlist.length }})</span>
-      <input
-        type="text"
-        class="playlist-search"
-        v-model="searchQuery"
-        placeholder="搜索歌曲..."
-      />
+      <div class="header-actions">
+        <input
+          type="text"
+          class="playlist-search"
+          v-model="searchQuery"
+          placeholder="搜索歌曲..."
+        />
+        <button class="refresh-btn" @click="emit('refresh')" title="刷新列表">
+          &#128260;
+        </button>
+      </div>
     </div>
     <div class="playlist-content">
       <div
@@ -124,6 +130,28 @@ function selectTrack(index: number) {
   font-weight: 600;
   color: rgba(255, 255, 255, 0.9);
   gap: 12px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .playlist-search {

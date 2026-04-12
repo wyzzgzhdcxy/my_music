@@ -10,6 +10,8 @@ export function ClearThumbnails():Promise<void>;
 
 export function DownloadLyric(arg1:string,arg2:string,arg3:string,arg4:number):Promise<string>;
 
+export function DownloadLyricFromNetEase(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function FetchCoverFromNetEase(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetBgImage():Promise<boolean>;
@@ -27,6 +29,8 @@ export function GetSettings():Promise<string>;
 export function GetStartTime():Promise<number>;
 
 export function LogMessage(arg1:string):Promise<void>;
+
+export function OpenCacheFolder():Promise<void>;
 
 export function SaveBgImage(arg1:string):Promise<boolean>;
 

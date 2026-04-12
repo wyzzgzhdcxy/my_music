@@ -3,9 +3,8 @@ package main
 import (
 	"embed"
 	"log"
+	"net"
 	"net/http"
-	"os"
-	"sync"
 	"time"
 	myUtil "wcj-go-common/utils"
 
@@ -18,29 +17,19 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// 文件锁实现单例
-var singletonLock sync.Mutex
-var singletonFile *os.File
-
 func main() {
 	startTime := time.Now()
 	myUtil.InitLog(true)
 	log.Printf("[启动] ========== 程序开始启动 ========== 时间: %s", startTime.Format("15:04:05.000"))
 
-	// 单例检查：尝试获取文件锁
-	lockFile, err := os.OpenFile("app.lock", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
-	if err != nil {
-		// 文件已存在或被锁定，说明已有实例在运行
+	// 单例检查：尝试连接 HTTP 服务器端口，端口被占用说明已有实例在运行
+	conn, err := net.DialTimeout("tcp", "localhost:19890", 500*time.Millisecond)
+	if err == nil {
+		conn.Close()
 		log.Printf("[启动] 检测到已有实例在运行，将老窗口置顶")
 		notifyAndExit()
 		return
 	}
-	singletonFile = lockFile
-	// 程序退出时释放锁
-	defer func() {
-		singletonFile.Close()
-		os.Remove("app.lock")
-	}()
 
 	// Create an instance of the app structure
 	app := NewApp()

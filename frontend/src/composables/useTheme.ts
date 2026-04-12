@@ -5,6 +5,7 @@ export function useTheme() {
   // Background
   const bgColor = ref('#000000')
   const bgImage = ref('')
+  const bgImageEnabled = ref(true)
 
   // Build background image URL from audio stream URL
   function buildBgImageUrl(streamUrl: string): string {
@@ -29,7 +30,8 @@ export function useTheme() {
       lyricColor: lyricColor.value,
       titleColor: titleColor.value,
       titlebarColor: titlebarColor.value,
-      lyricsColor: lyricsColor.value
+      lyricsColor: lyricsColor.value,
+      bgImageEnabled: bgImageEnabled.value
     }
     await SaveSettings(JSON.stringify(settings))
   }
@@ -87,6 +89,7 @@ export function useTheme() {
           const hasBg = await SaveBgImage(dataUrl)
           if (hasBg && streamUrl) {
             bgImage.value = buildBgImageUrl(streamUrl)
+            bgImageEnabled.value = true
           }
           resolve(hasBg)
         }
@@ -94,6 +97,11 @@ export function useTheme() {
       }
       input.click()
     })
+  }
+
+  function updateBgImageEnabled(enabled: boolean) {
+    bgImageEnabled.value = enabled
+    saveSettings()
   }
 
   async function initTheme(): Promise<void> {
@@ -108,6 +116,7 @@ export function useTheme() {
       if (settings.titleColor) titleColor.value = settings.titleColor
       if (settings.titlebarColor) titlebarColor.value = settings.titlebarColor
       if (settings.lyricsColor) lyricsColor.value = settings.lyricsColor
+      if (typeof settings.bgImageEnabled === 'boolean') bgImageEnabled.value = settings.bgImageEnabled
     }
     // Background image will be loaded after audio server starts
   }
@@ -115,6 +124,7 @@ export function useTheme() {
   function resetTheme() {
     bgColor.value = '#000000'
     bgImage.value = ''
+    bgImageEnabled.value = true
     btnColor.value = '#ffffff'
     vizColor.value = '#74b9ff'
     lyricColor.value = '#ffffff'
@@ -127,6 +137,7 @@ export function useTheme() {
   return {
     bgColor,
     bgImage,
+    bgImageEnabled,
     btnColor,
     vizColor,
     lyricColor,
@@ -140,6 +151,7 @@ export function useTheme() {
     updateTitleColor,
     updateTitlebarColor,
     updateLyricsColor,
+    updateBgImageEnabled,
     saveBgImage,
     initTheme,
     resetTheme
