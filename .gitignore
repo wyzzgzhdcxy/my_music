@@ -1,0 +1,8 @@
+build/bin
+node_modules
+frontend/dist
+/build/bin/
+/.vscode/
+.idea
+*.exe
+/frontend/wailsjs/
