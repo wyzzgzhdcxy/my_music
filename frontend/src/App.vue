@@ -158,6 +158,11 @@ const miniModeRestoreSize = ref({ width: 924, height: 568 })
 const miniModeRestoreAlwaysOnTop = ref(false)
 const smallScreenRestoreSize = ref({ width: 924, height: 568 })
 
+// Window size constants
+const FULL_WIDTH = 924
+const FULL_HEIGHT = 568
+const SMALL_WIDTH = 300
+
 // Computed
 const trackTitle = computed(() => {
   const t = playlistState.currentTrack.value.name
@@ -188,10 +193,6 @@ function toggleMenu() {
 }
 
 async function toggleSmallScreen() {
-  const FULL_WIDTH = 924
-  const SMALL_WIDTH = 300
-  const HEIGHT = 568
-
   const wasSmallScreen = isSmallScreen.value
   isSmallScreen.value = !isSmallScreen.value
 
@@ -201,9 +202,9 @@ async function toggleSmallScreen() {
   if (isSmallScreen.value) {
     // 进入小屏模式，保存当前窗口尺寸
     smallScreenRestoreSize.value = { width: size.w, height: size.h }
-    WindowSetMinSize(SMALL_WIDTH, HEIGHT)
-    WindowSetMaxSize(SMALL_WIDTH, HEIGHT)
-    WindowSetSize(SMALL_WIDTH, HEIGHT)
+    WindowSetMinSize(SMALL_WIDTH, FULL_HEIGHT)
+    WindowSetMaxSize(SMALL_WIDTH, FULL_HEIGHT)
+    WindowSetSize(SMALL_WIDTH, FULL_HEIGHT)
     WindowSetPosition(pos.x + size.w - SMALL_WIDTH, pos.y)
   } else {
     // 退出小屏模式，恢复之前的大小和位置
@@ -211,7 +212,10 @@ async function toggleSmallScreen() {
     WindowSetMaxSize(0, 0)
     WindowSetSize(smallScreenRestoreSize.value.width, smallScreenRestoreSize.value.height)
     WindowSetPosition(pos.x + SMALL_WIDTH - smallScreenRestoreSize.value.width, pos.y)
-    WindowSetMinSize(FULL_WIDTH, HEIGHT)
+    // 视频模式下不限制最小尺寸，允许用户自由缩放窗口
+    if (!isVideoMode.value) {
+      WindowSetMinSize(FULL_WIDTH, FULL_HEIGHT)
+    }
   }
 }
 
@@ -241,7 +245,10 @@ async function toggleMiniMode() {
     WindowSetMaxSize(0, 0)
     WindowSetSize(restoreWidth, restoreHeight)
     WindowSetPosition(miniModeRestorePos.value.x, miniModeRestorePos.value.y)
-    WindowSetMinSize(restoreWidth, restoreHeight)
+    // 视频模式下不限制最小尺寸，允许用户自由缩放窗口
+    if (!isVideoMode.value) {
+      WindowSetMinSize(restoreWidth, restoreHeight)
+    }
     alwaysOnTop.value = miniModeRestoreAlwaysOnTop.value
     WindowSetAlwaysOnTop(alwaysOnTop.value)
     setAlwaysOnTopState(alwaysOnTop.value)
@@ -355,6 +362,10 @@ async function restoreWindowState() {
       if (state.x >= 0 && state.y >= 0) {
         WindowSetPosition(state.x, state.y)
         WindowSetSize(state.width, state.height)
+        // 视频模式下不设置最小尺寸限制，允许自由缩放
+        if (!isVideoMode.value) {
+          WindowSetMinSize(FULL_WIDTH, FULL_HEIGHT)
+        }
       }
     }
   } catch (e) {
@@ -494,9 +505,7 @@ function loadTrack(index: number) {
 
   if (audioPlayer.isPlaying.value) {
     if (track.isVideo) {
-      nextTick(() => {
-        videoPlayerRef.value?.play()
-      })
+      pendingVideoPlay.value = true
     } else {
       audioPlayer.play()
     }
@@ -559,7 +568,13 @@ function handleTrackEnded() {
   const newIndex = playlistState.nextTrack(playlistState.playlist.value[playlistState.currentIndex.value])
   if (newIndex >= 0) {
     loadTrack(newIndex)
-    audioPlayer.play()
+    // 视频模式下等待 canplay 事件后再播放，音频模式下直接播放
+    const track = playlistState.playlist.value[playlistState.currentIndex.value]
+    if (track?.isVideo) {
+      pendingVideoPlay.value = true
+    } else {
+      audioPlayer.play()
+    }
   }
 }
 
@@ -636,8 +651,62 @@ function togglePlaylist() {
 
 // Video loading ref
 const isVideoLoading = ref(false)
+// 视频准备好后自动播放的标记
+const pendingVideoPlay = ref(false)
 
 // Video event handlers
+function onVideoCanplay() {
+  if (pendingVideoPlay.value) {
+    pendingVideoPlay.value = false
+    videoPlayerRef.value?.play()
+  }
+}
+
+async function fitWindowToVideo() {
+  const videoEl = videoPlayerRef.value?.video
+  if (!videoEl || videoEl.videoWidth <= 0 || videoEl.videoHeight <= 0) return
+  showMenu.value = false
+
+  const videoW = videoEl.videoWidth
+  const videoH = videoEl.videoHeight
+  const titlebarH = 30
+
+  // WebView2 无边框窗口存在外框与内容区的偏移，通过当前窗口反算
+  const curSize = await WindowGetSize()
+  const insetW = curSize.w - window.innerWidth
+  const insetH = curSize.h - window.innerHeight
+
+  // 屏幕限制：不超过屏幕的 90%
+  const screenW = window.screen.availWidth
+  const screenH = window.screen.availHeight
+  const maxW = Math.round(screenW * 0.9)
+  const maxH = Math.round(screenH * 0.9)
+
+  let targetW = videoW + insetW
+  let targetH = videoH + titlebarH + insetH
+
+  // 如果超过屏幕限制，等比缩放（内容区缩放）
+  const contentMaxW = maxW - insetW
+  const contentMaxH = maxH - titlebarH - insetH
+  if (videoW > contentMaxW || videoH > contentMaxH) {
+    const scale = Math.min(contentMaxW / videoW, contentMaxH / videoH)
+    targetW = Math.round(videoW * scale) + insetW
+    targetH = Math.round(videoH * scale) + titlebarH + insetH
+  }
+
+  // 最小窗口尺寸
+  targetW = Math.max(targetW, 320)
+  targetH = Math.max(targetH, 200)
+
+  const pos = await WindowGetPosition()
+  const size = await WindowGetSize()
+  const newX = pos.x + Math.round((size.w - targetW) / 2)
+  const newY = pos.y + Math.round((size.h - targetH) / 2)
+
+  WindowSetSize(targetW, targetH)
+  WindowSetPosition(Math.max(0, newX), Math.max(0, newY))
+}
+
 function onVideoLoadedmetadata(durationVal: number) {
   isVideoLoading.value = false
   audioPlayer.duration.value = durationVal
@@ -747,6 +816,24 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// ============== Mouse Wheel ==============
+function handleWheel(e: WheelEvent) {
+  // 只在视频模式下处理，且不在输入框上
+  if (!isVideoMode.value) return
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+  // 防止误触进度条等情况，只在视频区域处理
+  const videoContainer = document.querySelector('.video-container')
+  if (!videoContainer?.contains(e.target as Node)) return
+
+  // 滚轮向上滚动（deltaY < 0）切换上一首，向下滚动（deltaY > 0）切换下一首
+  if (e.deltaY < 0) {
+    prevTrack()
+  } else {
+    nextTrack()
+  }
+}
+
 // ============== Save/Restore Play State ==============
 async function saveCurrentPlayState() {
   if (musicDir.value && playlistState.playlist.value.length > 0) {
@@ -822,6 +909,11 @@ async function loadPlaylist() {
   const result = await GetMediaFiles(dir)
   playlistState.setPlaylist(result.files, result.isVideoMode)
   isVideoMode.value = result.isVideoMode
+  // 视频模式下清除窗口尺寸限制
+  if (result.isVideoMode) {
+    WindowSetMinSize(0, 0)
+    WindowSetMaxSize(0, 0)
+  }
   const scanElapsed = Date.now() - loadStart
   LogMessage(`[前端] GetMediaFiles 扫描完成，共 ${result.files.length} 个文件 (耗时 ${scanElapsed}ms)`)
 
@@ -867,6 +959,11 @@ async function selectMusicFolder() {
     const result = await GetMediaFiles(path)
     playlistState.setPlaylist(result.files, result.isVideoMode)
     isVideoMode.value = result.isVideoMode
+    // 视频模式下清除窗口尺寸限制
+    if (result.isVideoMode) {
+      WindowSetMinSize(0, 0)
+      WindowSetMaxSize(0, 0)
+    }
 
     if (result.files.length > 0) {
       playlistState.currentIndex.value = 0
@@ -891,6 +988,11 @@ async function refreshPlaylist() {
     const result = await GetMediaFiles(musicDir.value)
     playlistState.setPlaylist(result.files, result.isVideoMode)
     isVideoMode.value = result.isVideoMode
+    // 视频模式下清除窗口尺寸限制
+    if (result.isVideoMode) {
+      WindowSetMinSize(0, 0)
+      WindowSetMaxSize(0, 0)
+    }
 
     // 如果当前播放的曲目已不存在，重置
     if (playlistState.currentIndex.value >= result.files.length) {
@@ -945,7 +1047,9 @@ async function openCacheFolder() {
 watch(isVideoMode, (newVal) => {
   if (newVal) {
     nextTick(() => {
-      // Video listeners are setup in VideoPlayer component
+      // 视频模式下清除窗口尺寸限制，允许自由缩放
+      WindowSetMinSize(0, 0)
+      WindowSetMaxSize(0, 0)
     })
   }
 })
@@ -1005,6 +1109,7 @@ onMounted(async () => {
   window.addEventListener('click', handleClickOutside)
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener('beforeunload', handleBeforeUnload)
+  window.addEventListener('wheel', handleWheel)
   const mountElapsed = Date.now() - mountStart
   LogMessage(`[前端] onMounted 完成，界面已渲染 (耗时 ${mountElapsed}ms)`)
 })
@@ -1018,6 +1123,7 @@ onUnmounted(() => {
   window.removeEventListener('click', handleClickOutside)
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.removeEventListener('wheel', handleWheel)
   saveCurrentPlayState()
   stopMinimizePolling()
   stopWindowStatePolling()
@@ -1077,6 +1183,7 @@ onUnmounted(() => {
             @toggleSmallScreen="toggleSmallScreen(); showMenu = false"
             @toggleMiniMode="toggleMiniMode(); showMenu = false"
             @toggleAlwaysOnTop="toggleAlwaysOnTop(); showMenu = false"
+            @fitToVideo="fitWindowToVideo()"
             @update:bgColor="theme.updateBgColor"
             @update:btnColor="theme.updateBtnColor"
             @update:vizColor="theme.updateVizColor"
@@ -1129,6 +1236,7 @@ onUnmounted(() => {
       @dblclick-fullscreen="toggleVideoFullscreen"
       @loadedmetadata="onVideoLoadedmetadata"
       @timeupdate="onVideoTimeupdate"
+      @canplay="onVideoCanplay"
       @ended="onVideoEnded"
       @error="onVideoError"
       @play="onVideoPlay"

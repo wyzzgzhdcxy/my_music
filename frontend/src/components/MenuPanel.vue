@@ -23,6 +23,7 @@ const emit = defineEmits<{
   toggleSmallScreen: []
   toggleMiniMode: []
   toggleAlwaysOnTop: []
+  fitToVideo: []
   'update:bgColor': [color: string]
   'update:btnColor': [color: string]
   'update:vizColor': [color: string]
@@ -102,6 +103,10 @@ function handleLyricsColorChange(e: Event) {
       <div class="menu-item" @click="emit('toggleAlwaysOnTop')">
         <span class="menu-icon">&#128204;</span>
         <span>{{ alwaysOnTop ? '取消置顶' : '窗口置顶' }}</span>
+      </div>
+      <div class="menu-item" @click="emit('fitToVideo')">
+        <span class="menu-icon">&#128470;</span>
+        <span>自适应窗口</span>
       </div>
       <div class="menu-divider"></div>
       <div class="menu-item" @click="emit('clearCache')">

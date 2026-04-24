@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,7 @@ type App struct {
 	httpClient *http.Client
 	whttpAddr string
 	startTime time.Time
+	lyricDB   *sql.DB
 }
 
 // NewApp creates a new App application struct
@@ -45,6 +47,16 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	elapsed := time.Since(a.startTime)
 	log.Printf("[启动] Wails startup 完成 耗时: %s", elapsed)
+
+	// 初始化歌词数据库
+	dataDir := getDataDir()
+	var err error
+	a.lyricDB, err = openLyricDB(dataDir)
+	if err != nil {
+		log.Printf("[启动] 歌词数据库初始化失败: %v", err)
+	} else {
+		log.Printf("[启动] 歌词数据库初始化完成")
+	}
 
 	// 启动 whttp 文件服务器（用于封面图片、音频等）
 	log.Printf("[whttp] 正在启动...")
@@ -395,6 +407,14 @@ type LyricResult struct {
 func (a *App) GetLyric(lyricPath string, artist string, title string, musicPath string, musicDir string, duration float64) LyricResult {
 	log.Printf("[GetLyric] lyricPath=%s, artist=%s, title=%s, musicPath=%s, duration=%.0f", lyricPath, artist, title, musicPath, duration)
 
+	// 优先从数据库查找
+	if a.lyricDB != nil && musicPath != "" {
+		musicName := strings.TrimSuffix(filepath.Base(musicPath), filepath.Ext(musicPath))
+		if content := getLyricFromDB(a.lyricDB, musicName+".lrc"); content != "" {
+			return LyricResult{Content: content, LyricPath: lyricPath}
+		}
+	}
+
 	// If lyric file exists, read and return (local LRC file)
 	if lyricPath != "" {
 		data, err := os.ReadFile(lyricPath)
@@ -552,6 +572,10 @@ func (a *App) DownloadLyric(musicPath string, artist string, title string, durat
 		return ""
 	}
 
+	if a.lyricDB != nil {
+		saveLyricToDB(a.lyricDB, musicName+".lrc", lyricContent)
+	}
+
 	log.Printf("[歌词下载] 歌词已保存: %s", lyricPath)
 	return lyricPath
 }
@@ -676,6 +700,10 @@ func (a *App) DownloadLyricFromNetEase(musicPath, artist, title string) string {
 	if err := os.WriteFile(lyricPath, []byte(lyricContent), 0644); err != nil {
 		log.Printf("[网易云歌词] 保存文件失败: %v", err)
 		return ""
+	}
+
+	if a.lyricDB != nil {
+		saveLyricToDB(a.lyricDB, musicName+".lrc", lyricContent)
 	}
 
 	log.Printf("[网易云歌词] 歌词已保存: %s", lyricPath)
@@ -846,10 +874,9 @@ func generateVideoThumbnail(videoPath string, outputPath string) error {
 
 // runCommand executes a shell command and returns the error
 func runCommand(cmd []string) error {
-	// Simple command execution using exec.LookPath and exec.Command
+	// Find ffmpeg path
 	ffmpegPath := cmd[0]
 	if ffmpegPath == "ffmpeg" {
-		// Find ffmpeg in PATH
 		if path, ok := os.LookupEnv("PATH"); ok {
 			for _, dir := range strings.Split(path, string(os.PathListSeparator)) {
 				p := filepath.Join(dir, "ffmpeg")
@@ -857,7 +884,6 @@ func runCommand(cmd []string) error {
 					ffmpegPath = p
 					break
 				}
-				// Try .exe suffix on Windows
 				p += ".exe"
 				if _, err := os.Stat(p); err == nil {
 					ffmpegPath = p
@@ -868,16 +894,12 @@ func runCommand(cmd []string) error {
 	}
 	cmd[0] = ffmpegPath
 
-	// Use exec.Command to run
-	var execCmd *exec.Cmd
+	// Use exec.Command directly (not through shell) to avoid special char issues
+	execCmd := exec.Command(cmd[0], cmd[1:]...)
 	if runtime.GOOS == "windows" {
-		// On Windows, run through cmd.exe without showing window
-		execCmd = exec.Command("cmd", "/c", strings.Join(cmd, " "))
 		execCmd.SysProcAttr = &syscall.SysProcAttr{
 			HideWindow: true,
 		}
-	} else {
-		execCmd = exec.Command(cmd[0], cmd[1:]...)
 	}
 	output, err := execCmd.CombinedOutput()
 	if err != nil {

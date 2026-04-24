@@ -10,6 +10,7 @@ const emit = defineEmits<{
   'loadedmetadata': [duration: number]
   'timeupdate': [time: number]
   'ended': []
+  'canplay': []
   'play': []
   'pause': []
   'error': [msg: string]
@@ -27,6 +28,10 @@ function setupVideoListeners() {
 
   v.addEventListener('loadedmetadata', () => {
     emit('loadedmetadata', v.duration)
+  })
+
+  v.addEventListener('canplay', () => {
+    emit('canplay')
   })
 
   v.addEventListener('playing', () => {
